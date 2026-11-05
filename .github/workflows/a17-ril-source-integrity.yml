@@ -1,0 +1,54 @@
+name: Android17 PE RIL source integrity
+
+on:
+  push:
+    branches:
+      - integrate/a17-aosp17-ril-20261105
+    paths:
+      - '.github/workflows/a17-ril-source-integrity.yml'
+      - 'libril/**'
+      - 'librilutils/**'
+      - 'rild/**'
+      - 'Android.bp'
+      - 'docs/ANDROID_17_RIL_SOURCE_MERGE_AUDIT.md'
+  pull_request:
+    paths:
+      - '.github/workflows/a17-ril-source-integrity.yml'
+      - 'libril/**'
+      - 'librilutils/**'
+      - 'rild/**'
+      - 'Android.bp'
+
+permissions:
+  contents: read
+
+jobs:
+  verify-source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify AOSP17 RIL ancestry and modern Soong ownership
+        shell: bash
+        run: |
+          set -euo pipefail
+          pe_base=b34bd171db21c0bca7ae0c867d224a29b4e731a7
+          aosp_base=35d736e2410f8b49e3b6f3a5649dc9e9d24ccd3c
+          git merge-base --is-ancestor "$pe_base" HEAD
+          git merge-base --is-ancestor "$aosp_base" HEAD
+          test "$(git rev-parse "$aosp_base^{tree}")" = "fd290e7a4c11c04092a10c887aa4c5ddcc6fa470"
+          test -f libril/Android.bp
+          test -f rild/Android.bp
+          test ! -e libril/Android.mk
+          grep -Fq 'name: "libril"' libril/Android.bp
+          grep -Fq 'vendor: true' libril/Android.bp
+          grep -Fq 'name: "rild"' rild/Android.bp
+          grep -Fq 'soong_config_variable("ril", "use_aosp_rild")' rild/Android.bp
+          grep -Fq 'name: "ril_headers"' Android.bp
+          git show "$pe_base:libril/Android.mk" | grep -Fq 'BOARD_PROVIDES_LIBRIL'
+          git diff --check "$aosp_base" HEAD
+          echo 'PASS: official AOSP17 RIL source, PE ancestry, reviewed Soong gate'
+      - name: Validation boundary
+        run: |
+          echo 'SOURCE ONLY. No Android17 Soong full graph, SELinux, VINTF or radio runtime test.'

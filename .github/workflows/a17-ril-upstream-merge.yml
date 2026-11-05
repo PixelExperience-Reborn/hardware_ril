@@ -1,0 +1,86 @@
+name: Android17 PE RIL exact official source merge
+
+on:
+  push:
+    branches:
+      - integrate/a17-aosp17-ril-20261105
+    paths:
+      - '.github/workflows/a17-ril-upstream-merge.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  merge-ril:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Merge exact official AOSP17 RIL preserving PE source history
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/integrate/a17-aosp17-ril-20261105"
+          git config user.name "PixelExperience-Reborn CI"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          pe_base=b34bd171db21c0bca7ae0c867d224a29b4e731a7
+          official=35d736e2410f8b49e3b6f3a5649dc9e9d24ccd3c
+          official_tree=fd290e7a4c11c04092a10c887aa4c5ddcc6fa470
+
+          git merge-base --is-ancestor "$pe_base" HEAD
+          git remote add aosp https://android.googlesource.com/platform/hardware/ril
+          git fetch --no-tags aosp refs/tags/android-17.0.0_r1
+          upstream="$(git rev-parse FETCH_HEAD^{commit})"
+          test "$upstream" = "$official"
+          test "$(git rev-parse "$upstream^{tree}")" = "$official_tree"
+
+          # Do not merge unrelated roots or discard PE commits.
+          git merge-base HEAD "$upstream" >/dev/null
+          if ! git merge --no-ff --no-edit \
+            -m "merge: official AOSP17 hardware/ril with PixelExperience history" \
+            "$upstream"; then
+            conflicts="$(git diff --name-only --diff-filter=U)"
+            expected="libril/Android.mk"
+            if test "$conflicts" != "$expected"; then
+              echo "::error::Unexpected RIL conflict paths; do not push"
+              printf '%s\n' "$conflicts"
+              git status --short
+              exit 1
+            fi
+            # The only permitted case: historical PE modified the obsolete
+            # Make-based libril module, but AOSP17 removed it in favor of
+            # a vendor cc_library_shared named libril in Android.bp.
+            test -f libril/Android.bp
+            git cat-file -e "$upstream:libril/Android.bp"
+            if git cat-file -e "$upstream:libril/Android.mk" 2>/dev/null; then
+              echo "::error::Upstream still provides Android.mk; review needed"
+              exit 1
+            fi
+            git show "$pe_base:libril/Android.mk" | grep -Fq 'BOARD_PROVIDES_LIBRIL'
+            git show "$upstream:libril/Android.bp" | grep -Fq 'name: "libril"'
+            git rm -- libril/Android.mk
+            test -z "$(git diff --name-only --diff-filter=U)"
+            git commit -m "merge: drop obsolete Make libril guard; use AOSP17 Soong libril"
+          fi
+
+          git merge-base --is-ancestor "$pe_base" HEAD
+          git merge-base --is-ancestor "$official" HEAD
+          test -f Android.bp
+          test -f libril/Android.bp
+          test -f rild/Android.bp
+          test ! -f libril/Android.mk
+          grep -Fq 'name: "libril"' libril/Android.bp
+          grep -Fq 'name: "ril_headers"' Android.bp
+          grep -Fq 'android.hardware.radio@1.0' libril/Android.bp
+          git diff --check "$official" HEAD
+          test -z "$(git status --porcelain)"
+          git push origin HEAD:refs/heads/integrate/a17-aosp17-ril-20261105
+
+      - name: Validation boundary
+        if: always()
+        run: |
+          echo "Exact source/tag integrity and resolved Git merge only."
+          echo "No Android17 Soong/Radio AIDL, vendor blob ABI, VINTF/SELinux or mondrian modem runtime test."
